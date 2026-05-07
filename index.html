@@ -4,20 +4,87 @@
   <meta charset="UTF-8" />
   <title>Three.js GLB Viewer</title>
   <style>
-    body { margin: 0; overflow: hidden; }
-    canvas { display: block; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow-y: scroll;
+      background: #000; /* page background behind transparent canvas */
+      color: #fff;
+      font-family: system-ui, sans-serif;
+    }
+    #viewer-container {
+      position: fixed;
+      inset: 0;
+      pointer-events: none; /* UI floats above */
+    }
+    canvas {
+      display: block;
+    }
+    #ui {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: auto;
+    }
+    #ui button {
+      background: rgba(0,0,0,0.7);
+      color: #fff;
+      border: 1px solid #555;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #ui button:hover {
+      background: rgba(255,255,255,0.1);
+    }
+    .hotspot {
+      position: fixed;
+      padding: 4px 8px;
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      font-size: 11px;
+      border-radius: 4px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    /* fake scroll space so scroll‑scrubbing has room */
+    #scroll-space {
+      height: 3000px;
+    }
   </style>
 </head>
 <body>
 
+<div id="viewer-container"></div>
+
+<div id="ui">
+  <button id="btn-reset">Reset Camera</button>
+  <button id="btn-auto">Toggle Auto‑Rotate</button>
+  <button id="btn-play">Play / Pause Animation</button>
+  <button id="btn-wire">Toggle Wireframe</button>
+</div>
+
+<div id="hotspot1" class="hotspot">Hotspot 1</div>
+
+<div id="scroll-space"></div>
+
+<!-- Three.js core + extras -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/loaders/RGBELoader.js"></script>
 
 <script>
+  const container = document.getElementById('viewer-container');
+
   // Scene
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111111);
 
   // Camera
   const camera = new THREE.PerspectiveCamera(
@@ -27,45 +94,190 @@
     1000
   );
   camera.position.set(2, 2, 3);
+  const initialCameraPos = camera.position.clone();
+  const initialCameraTarget = new THREE.Vector3(0, 0, 0);
 
-  // Renderer
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  // Renderer (transparent background)
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  document.body.appendChild(renderer.domElement);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setClearColor(0x000000, 0); // transparent
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  container.appendChild(renderer.domElement);
 
   // Controls
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.copy(initialCameraTarget);
 
-  // Lighting
-  const light1 = new THREE.DirectionalLight(0xffffff, 1);
-  light1.position.set(5, 5, 5);
-  scene.add(light1);
+  // Lights (for shadows)
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  const light2 = new THREE.AmbientLight(0xffffff, 0.4);
-  scene.add(light2);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  dirLight.position.set(5, 10, 5);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.set(2048, 2048);
+  scene.add(dirLight);
 
-  // Load your GLB
+  const ambient = new THREE.AmbientLight(0xffffff, 0.3);
+  scene.add(ambient);
+
+  // Ground plane to catch shadows
+  const groundGeo = new THREE.PlaneGeometry(20, 20);
+  const groundMat = new THREE.ShadowMaterial({ opacity: 0.3 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.01;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // HDR environment
+  new THREE.RGBELoader()
+    .setDataType(THREE.UnsignedByteType)
+    .load(
+      'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_08_1k.hdr',
+      function (texture) {
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        const envMap = pmrem.fromEquirectangular(texture).texture;
+        scene.environment = envMap;
+        texture.dispose();
+        pmrem.dispose();
+      }
+    );
+
+  // GLB loading
   const loader = new THREE.GLTFLoader();
-  loader.load("VanV2blend.glb", function (gltf) {
-    scene.add(gltf.scene);
+  let model = null;
+  let mixer = null;
+  let action = null;
+  let autoRotate = true;
+  let playing = true;
+  let wireframe = false;
+
+  loader.load('VanV2blend.glb', function (gltf) {
+    model = gltf.scene;
+    model.traverse(obj => {
+      if (obj.isMesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+    scene.add(model);
+
+    // Center model
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    model.position.sub(center);
+
+    // Animation setup
+    if (gltf.animations && gltf.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(model);
+      action = mixer.clipAction(gltf.animations[0]);
+      action.play();
+    }
+
+    // Hotspot: pick a point on the model (center top of bounding box)
+    const hotspotPos = box.getCenter(new THREE.Vector3());
+    hotspotPos.y = box.max.y;
+    hotspotWorldPos.copy(hotspotPos);
   });
 
-  // Resize handling
-  window.addEventListener("resize", () => {
+  // Hotspot DOM element
+  const hotspotEl = document.getElementById('hotspot1');
+  const hotspotWorldPos = new THREE.Vector3();
+  const hotspotScreenPos = new THREE.Vector3();
+
+  function updateHotspot() {
+    if (!model) return;
+    hotspotScreenPos.copy(hotspotWorldPos);
+    hotspotScreenPos.project(camera);
+    const x = (hotspotScreenPos.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-hotspotScreenPos.y * 0.5 + 0.5) * window.innerHeight;
+    hotspotEl.style.left = x + 'px';
+    hotspotEl.style.top = y + 'px';
+  }
+
+  // Scroll‑scrubbing for animation
+  function updateScrollScrub() {
+    if (!mixer || !action) return;
+    const scrollMax = document.body.scrollHeight - window.innerHeight;
+    const t = scrollMax > 0 ? window.scrollY / scrollMax : 0;
+    const duration = action.getClip().duration;
+    action.paused = true;
+    action.time = t * duration;
+    mixer.update(0); // force update
+  }
+
+  window.addEventListener('scroll', () => {
+    updateScrollScrub();
+  });
+
+  // UI buttons
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    camera.position.copy(initialCameraPos);
+    controls.target.copy(initialCameraTarget);
+    controls.update();
+  });
+
+  document.getElementById('btn-auto').addEventListener('click', () => {
+    autoRotate = !autoRotate;
+  });
+
+  document.getElementById('btn-play').addEventListener('click', () => {
+    if (!action) return;
+    playing = !playing;
+    action.paused = !playing;
+  });
+
+  document.getElementById('btn-wire').addEventListener('click', () => {
+    wireframe = !wireframe;
+    if (!model) return;
+    model.traverse(obj => {
+      if (obj.isMesh && obj.material) {
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach(m => m.wireframe = wireframe);
+        } else {
+          obj.material.wireframe = wireframe;
+        }
+      }
+    });
+  });
+
+  // Resize
+  window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // Animation loop
+  const clock = new THREE.Clock();
+
   function animate() {
     requestAnimationFrame(animate);
+
+    const delta = clock.getDelta();
+
+    // Auto‑rotation
+    if (model && autoRotate) {
+      model.rotation.y += 0.3 * delta;
+    }
+
+    // Animation playback (only if not scroll‑scrubbing)
+    if (mixer && action && playing) {
+      mixer.update(delta);
+    }
+
     controls.update();
     renderer.render(scene, camera);
+    updateHotspot();
   }
+
   animate();
 </script>
 
 </body>
 </html>
+
+
 
