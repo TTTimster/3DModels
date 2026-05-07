@@ -9,14 +9,14 @@
       padding: 0;
       height: 100%;
       overflow-y: scroll;
-      background: #000; /* page background behind transparent canvas */
+      background: #000;
       color: #fff;
       font-family: system-ui, sans-serif;
     }
     #viewer-container {
       position: fixed;
       inset: 0;
-      pointer-events: none; /* UI floats above */
+      pointer-events: none;
     }
     canvas {
       display: block;
@@ -53,7 +53,6 @@
       pointer-events: none;
       white-space: nowrap;
     }
-    /* fake scroll space so scroll‑scrubbing has room */
     #scroll-space {
       height: 3000px;
     }
@@ -97,33 +96,40 @@
   const initialCameraPos = camera.position.clone();
   const initialCameraTarget = new THREE.Vector3(0, 0, 0);
 
-  // Renderer (transparent background)
+  // Renderer (transparent)
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setClearColor(0x000000, 0); // transparent
+  renderer.setClearColor(0x000000, 0);
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   container.appendChild(renderer.domElement);
 
-  // Controls
+  // Controls (mouse + zoom)
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableZoom = true;
+  controls.enableRotate = true;
+  controls.enablePan = true;
+  controls.minDistance = 0.5;
+  controls.maxDistance = 10;
+  controls.minPolarAngle = Math.PI * 0.1;
+  controls.maxPolarAngle = Math.PI * 0.9;
   controls.target.copy(initialCameraTarget);
 
-  // Lights (for shadows)
+  // Lighting (medium brightness)
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.4);
   dirLight.position.set(5, 10, 5);
   dirLight.castShadow = true;
   dirLight.shadow.mapSize.set(2048, 2048);
   scene.add(dirLight);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.3);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.15);
   scene.add(ambient);
 
-  // Ground plane to catch shadows
+  // Ground shadow plane
   const groundGeo = new THREE.PlaneGeometry(20, 20);
   const groundMat = new THREE.ShadowMaterial({ opacity: 0.3 });
   const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -132,7 +138,7 @@
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // HDR environment
+  // HDR environment (softened)
   new THREE.RGBELoader()
     .setDataType(THREE.UnsignedByteType)
     .load(
@@ -141,6 +147,7 @@
         const pmrem = new THREE.PMREMGenerator(renderer);
         const envMap = pmrem.fromEquirectangular(texture).texture;
         scene.environment = envMap;
+        scene.environmentIntensity = 0.4;
         texture.dispose();
         pmrem.dispose();
       }
@@ -170,20 +177,20 @@
     const center = box.getCenter(new THREE.Vector3());
     model.position.sub(center);
 
-    // Animation setup
+    // Animation
     if (gltf.animations && gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(model);
       action = mixer.clipAction(gltf.animations[0]);
       action.play();
     }
 
-    // Hotspot: pick a point on the model (center top of bounding box)
+    // Hotspot position
     const hotspotPos = box.getCenter(new THREE.Vector3());
     hotspotPos.y = box.max.y;
     hotspotWorldPos.copy(hotspotPos);
   });
 
-  // Hotspot DOM element
+  // Hotspot
   const hotspotEl = document.getElementById('hotspot1');
   const hotspotWorldPos = new THREE.Vector3();
   const hotspotScreenPos = new THREE.Vector3();
@@ -198,7 +205,7 @@
     hotspotEl.style.top = y + 'px';
   }
 
-  // Scroll‑scrubbing for animation
+  // Scroll‑scrubbing
   function updateScrollScrub() {
     if (!mixer || !action) return;
     const scrollMax = document.body.scrollHeight - window.innerHeight;
@@ -206,12 +213,10 @@
     const duration = action.getClip().duration;
     action.paused = true;
     action.time = t * duration;
-    mixer.update(0); // force update
+    mixer.update(0);
   }
 
-  window.addEventListener('scroll', () => {
-    updateScrollScrub();
-  });
+  window.addEventListener('scroll', updateScrollScrub);
 
   // UI buttons
   document.getElementById('btn-reset').addEventListener('click', () => {
@@ -258,12 +263,10 @@
 
     const delta = clock.getDelta();
 
-    // Auto‑rotation
     if (model && autoRotate) {
       model.rotation.y += 0.3 * delta;
     }
 
-    // Animation playback (only if not scroll‑scrubbing)
     if (mixer && action && playing) {
       mixer.update(delta);
     }
@@ -278,6 +281,5 @@
 
 </body>
 </html>
-
 
 
