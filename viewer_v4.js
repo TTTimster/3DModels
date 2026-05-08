@@ -17,16 +17,16 @@ function initViewer(container) {
   // Camera (locked)
   const camera = new THREE.PerspectiveCamera(
     60,
-    window.innerWidth / window.innerHeight,
+    container.clientWidth / container.clientHeight,
     0.1,
     1000
   );
   camera.position.set(2, 2, 3);
   const cameraTarget = new THREE.Vector3(0, 0, 0);
 
-  // Renderer
+  // Renderer (adaptive to embed size)
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setClearColor(0x000000, 0);
   renderer.outputEncoding = THREE.sRGBEncoding;
@@ -95,25 +95,36 @@ function initViewer(container) {
     }
   );
 
-  // Scroll‑scrubbing
+  // Scroll‑scrubbing (0% → 50% = full animation)
   function updateScrollScrub() {
     if (!mixer || !action) return;
 
     const scrollMax = document.body.scrollHeight - window.innerHeight;
-    const t = scrollMax > 0 ? window.scrollY / scrollMax : 0;
+    const scrollY = window.scrollY;
+    let t = scrollY / scrollMax;
 
-    const duration = action.getClip().duration;
-    action.time = t * duration;
-    mixer.update(0);
+    const animEnd = 0.5; // halfway down the page
+
+    if (t <= animEnd) {
+      const mapped = t / animEnd;
+      const duration = action.getClip().duration;
+      action.time = mapped * duration;
+      mixer.update(0);
+    } else {
+      // Freeze at last frame
+      const duration = action.getClip().duration;
+      action.time = duration;
+      mixer.update(0);
+    }
   }
 
   window.addEventListener("scroll", updateScrollScrub);
 
-  // Resize
+  // Resize (adaptive to embed size)
   window.addEventListener("resize", () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.aspect = container.clientWidth / container.clientHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(container.clientWidth, container.clientHeight);
   });
 
   // Render loop
