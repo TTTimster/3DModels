@@ -1,10 +1,14 @@
-function startViewer() {
+function waitForContainer() {
   const container = document.getElementById("viewer-container");
   if (!container) {
-    requestAnimationFrame(startViewer);
+    setTimeout(waitForContainer, 50);
     return;
   }
+  startViewer(container);
+}
+waitForContainer();
 
+function startViewer(container) {
   // Scene
   const scene = new THREE.Scene();
 
@@ -16,8 +20,6 @@ function startViewer() {
     1000
   );
   camera.position.set(2, 2, 3);
-  const initialCameraPos = camera.position.clone();
-  const initialCameraTarget = new THREE.Vector3(0, 0, 0);
 
   // Renderer
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -28,16 +30,12 @@ function startViewer() {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   container.appendChild(renderer.domElement);
 
-  // Controls
+  // Controls (rotate + zoom allowed, but no auto-rotation)
   const controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.enableZoom = true;
   controls.enableRotate = true;
   controls.enablePan = true;
-  controls.minDistance = 0.5;
-  controls.maxDistance = 10;
-  controls.minPolarAngle = Math.PI * 0.1;
-  controls.maxPolarAngle = Math.PI * 0.9;
-  controls.target.copy(initialCameraTarget);
+  controls.target.set(0, 0, 0);
 
   // Lighting
   renderer.shadowMap.enabled = true;
@@ -46,22 +44,12 @@ function startViewer() {
   const dirLight = new THREE.DirectionalLight(0xffffff, 0.4);
   dirLight.position.set(5, 10, 5);
   dirLight.castShadow = true;
-  dirLight.shadow.mapSize.set(2048, 2048);
   scene.add(dirLight);
 
   const ambient = new THREE.AmbientLight(0xffffff, 0.15);
   scene.add(ambient);
 
-  // Ground shadow
-  const groundGeo = new THREE.PlaneGeometry(20, 20);
-  const groundMat = new THREE.ShadowMaterial({ opacity: 0.3 });
-  const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.01;
-  ground.receiveShadow = true;
-  scene.add(ground);
-
-  // HDR
+  // HDR Environment
   new THREE.RGBELoader()
     .setDataType(THREE.UnsignedByteType)
     .load(
@@ -81,19 +69,19 @@ function startViewer() {
   let model = null;
   let mixer = null;
   let action = null;
-  let autoRotate = true;
-  let playing = true;
 
   loader.load(
     "https://tttimster.github.io/3DModels/VanV2blend.glb",
     function (gltf) {
       model = gltf.scene;
+
       model.traverse((obj) => {
         if (obj.isMesh) {
           obj.castShadow = true;
           obj.receiveShadow = true;
         }
       });
+
       scene.add(model);
 
       // Center model
@@ -101,14 +89,29 @@ function startViewer() {
       const center = box.getCenter(new THREE.Vector3());
       model.position.sub(center);
 
-      // Animation
+      // Animation setup
       if (gltf.animations.length > 0) {
         mixer = new THREE.AnimationMixer(model);
         action = mixer.clipAction(gltf.animations[0]);
         action.play();
+        action.paused = true; // start frozen
       }
     }
   );
+
+  // Scroll‑scrubbing
+  function updateScrollScrub() {
+    if (!mixer || !action) return;
+
+    const scrollMax = document.body.scrollHeight - window.innerHeight;
+    const t = scrollMax > 0 ? window.scrollY / scrollMax : 0;
+
+    const duration = action.getClip().duration;
+    action.time = t * duration;
+    mixer.update(0); // force update
+  }
+
+  window.addEventListener("scroll", updateScrollScrub);
 
   // Resize
   window.addEventListener("resize", () => {
@@ -117,22 +120,9 @@ function startViewer() {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // Animate
-  const clock = new THREE.Clock();
-
+  // Animation loop
   function animate() {
     requestAnimationFrame(animate);
-
-    const delta = clock.getDelta();
-
-    if (model && autoRotate) {
-      model.rotation.y += 0.3 * delta;
-    }
-
-    if (mixer && action && playing) {
-      mixer.update(delta);
-    }
-
     controls.update();
     renderer.render(scene, camera);
   }
@@ -140,4 +130,3 @@ function startViewer() {
   animate();
 }
 
-startViewer();
