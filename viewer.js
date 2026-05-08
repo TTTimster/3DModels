@@ -1,18 +1,10 @@
-function waitForContainer() {
+<script>
   const container = document.getElementById("viewer-container");
-  if (!container) {
-    setTimeout(waitForContainer, 50);
-    return;
-  }
-  startViewer(container);
-}
-waitForContainer();
 
-function startViewer(container) {
   // Scene
   const scene = new THREE.Scene();
 
-  // Camera
+  // Camera (locked)
   const camera = new THREE.PerspectiveCamera(
     60,
     window.innerWidth / window.innerHeight,
@@ -20,6 +12,7 @@ function startViewer(container) {
     1000
   );
   camera.position.set(2, 2, 3);
+  const cameraTarget = new THREE.Vector3(0, 0, 0);
 
   // Renderer
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -29,13 +22,6 @@ function startViewer(container) {
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   container.appendChild(renderer.domElement);
-
-  // Controls (rotate + zoom allowed, but no auto-rotation)
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.enableZoom = true;
-  controls.enableRotate = true;
-  controls.enablePan = true;
-  controls.target.set(0, 0, 0);
 
   // Lighting
   renderer.shadowMap.enabled = true;
@@ -71,7 +57,7 @@ function startViewer(container) {
   let action = null;
 
   loader.load(
-    "https://tttimster.github.io/3DModels/VanV2blend.glb",
+    "VanV2blend.glb",
     function (gltf) {
       model = gltf.scene;
 
@@ -108,7 +94,7 @@ function startViewer(container) {
 
     const duration = action.getClip().duration;
     action.time = t * duration;
-    mixer.update(0); // force update
+    mixer.update(0);
   }
 
   window.addEventListener("scroll", updateScrollScrub);
@@ -120,13 +106,14 @@ function startViewer(container) {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // Animation loop
+  // Render loop
   function animate() {
     requestAnimationFrame(animate);
-    controls.update();
+    camera.lookAt(cameraTarget);
     renderer.render(scene, camera);
   }
 
   animate();
-}
+</script>
+
 
